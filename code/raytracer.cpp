@@ -11,10 +11,6 @@ NOTE(bSalmon):
 RAYCASTER_INTERNAL:
 0 - Public Build
 1 - Dev Build
-
-RAYCASTER_SLOW:
- 0 - Debugging Code Disabled
- 1 - Non-performant debugging code enabled
 */
 
 // Static Definitions
@@ -40,13 +36,8 @@ typedef float f32;
 typedef double f64;
 
 // NOTE(bSalmon): Utilities
-#if URBAN_SLOW
-#define ASSERT(expr) if(!(expr)) {*(int *)0 = 0;}
-#else
-#define ASSERT(expr)
-#endif
-
-#define min(a,b) (((a) < (b)) ? (a) : (b))
+#define ARRAY_COUNT(array) (sizeof(array) / sizeof((array)[0]))
+#define MIN_VAL(a,b) (((a) < (b)) ? (a) : (b))
 
 #define WIDTH 800
 #define HEIGHT 600
@@ -131,8 +122,58 @@ Vector3 Vector3Add(Vector3 *v1, Vector3 *v2)
 	return result;
 }
 
+Vector3 Vector3Cross(Vector3 *v1, Vector3 *v2)
+{
+	Vector3 result = {};
+	f32 i = (v1->y * v2->z) - (v1->z * v2->y);
+	f32 j = (v1->x * v2->z) - (v1->z * v2->x);
+	f32 k = (v1->x * v2->y) - (v1->y * v2->x);
+	j *= -1.0f;
+	
+	result.x = i;
+	result.y = j;
+	result.z = k;
+	
+	return result;
+}
+
 b32 RaySphereIntersection(Ray *ray, Sphere *sphere, f32 *closestIntersect)
 {
+	// Sphere Equation (circle equation in 3 dimensions)
+	// (x - a)^2 + (y - b)^2 + (z - c)^2 = r^2
+	//
+	// Where point of origin is 0,0,0
+	// x^2 + y^2 + z^2 = r^2
+	//
+	// p = vector on sphere
+	// x^2 + y^2 + z^2 = r^2 = p.p
+	//
+	// Sphere at Arbitrary Point Equation
+	// c = Sphere Point of Origin
+	// (p - c).(p - c) = r^2
+	//
+	// t = scalar value
+	// d = direction
+	// o = point of origin
+	// Ray Equation: p = td + o
+	//
+	// To solve ray/sphere intersection, the Ray Equation is
+	// substituted into the Sphere Equation
+	// (td + o - c).(td + o - c) = r^2
+	//
+	// Move r^2 to LHS, begin grouping
+	// (td + (o - c)).(td + (o - c)) - r^2 = 0
+	//
+	// Use Distributive Property of Dot Products
+	// d.dt^2 + td(o - c) + td(o - c) + (o - c).(o - c) - r^2 = 0
+	//
+	// d.dt^2 + 2d.(o - c)t + (o - c).(o - c) - r^2 = 0
+	// A^2 + Bt + C = 0 <- Quadratic Equation
+	// A = d.d
+	// B = 2d.(o - c)
+	// C = (o - c).(o - c) - r^2
+	// therefore At^2 + Bt + C = 0
+	
 	b32 result = false;
 	
 	f32 a = Vector3Dot(&ray->direction, &ray->direction);
@@ -140,7 +181,7 @@ b32 RaySphereIntersection(Ray *ray, Sphere *sphere, f32 *closestIntersect)
 	f32 b = 2.0f * Vector3Dot(&ray->direction, &distanceToSphere);
 	f32 c = Vector3Dot(&distanceToSphere, &distanceToSphere) - (sphere->radius * sphere->radius);
 	
-	f32 discriminant = (b * b) - (4 * (a * c));
+	f32 discriminant = (b * b) - (4.0f * (a * c));
 	
 	if (discriminant < 0)
 	{
@@ -148,9 +189,11 @@ b32 RaySphereIntersection(Ray *ray, Sphere *sphere, f32 *closestIntersect)
 	}
 	else
 	{
+		// If there are real results from the discriminant,
+		// find the closest to the camera (Z-Ordering)
 		f32 sqrtDiscriminant = sqrtf(discriminant);
-		f32 intersect0 = (-b + sqrtDiscriminant) / 2;
-		f32 intersect1 = (-b - sqrtDiscriminant) / 2;
+		f32 intersect0 = (-b + sqrtDiscriminant) / 2.0f;
+		f32 intersect1 = (-b - sqrtDiscriminant) / 2.0f;
 		
 		if (intersect0 > intersect1)
 		{
@@ -171,6 +214,186 @@ b32 RaySphereIntersection(Ray *ray, Sphere *sphere, f32 *closestIntersect)
 	return result;
 }
 
+bool ProcessSphereRayTracing(Ray *baseRay, Sphere *spheres, u32 sphereCount, Material *mats, Light *lights, u32 lightCount, f32 *coef, f32 *red, f32 *green, f32 *blue, s32 *level)
+{
+	// Find closest intersection
+	f32 closestIntersect = 20000.0f;
+	s32 currSphere = -1;
+	
+	for (u32 i = 0; i < sphereCount; ++i)
+	{
+		if (RaySphereIntersection(baseRay, &spheres[i], &closestIntersect))
+		{
+			currSphere = i;
+		}
+	}
+	
+	if (currSphere == -1)
+	{
+		return false;
+	}
+	
+	Vector3 scaled = Vector3Scale(&baseRay->direction, closestIntersect);
+	Vector3 reflectStart = Vector3Add(&baseRay->origin, &scaled);
+	
+	// Find normal for the new Vector at point of intersection
+	Vector3 normal = Vector3Sub(&reflectStart, &spheres[currSphere].position);
+	f32 normCheck = Vector3Dot(&normal, &normal);
+	if (normCheck == 0)
+	{
+		return false;
+	}
+	
+	normCheck = 1.0f / sqrtf(normCheck);
+	normal = Vector3Scale(&normal, normCheck);
+	
+	// Find material for current sphere
+	Material currMat = mats[spheres[currSphere].material];
+	
+	// Find value of the light at this point
+	for (u32 j = 0; j < lightCount; ++j)
+	{
+		Light currLight = lights[j];
+		Vector3 distance = Vector3Sub(&currLight.position, &reflectStart);
+		
+		if (Vector3Dot(&normal, &distance) <= 0.0f)
+		{
+			continue;
+		}
+		
+		closestIntersect = sqrtf(Vector3Dot(&distance, &distance));
+		
+		if (closestIntersect <= 0.0f)
+		{
+			continue;
+		}
+		
+		Ray lightRay;
+		lightRay.origin = reflectStart;
+		lightRay.direction = Vector3Scale(&distance, (1.0f/closestIntersect));
+		
+		// Lambert Diffusion
+		// D = L.NCI
+		// N = Normal at Intersection
+		// L = Normalised Vector from point of intersection to the light source
+		// C = Colour of Surface
+		// I = Intensity of incoming Light
+		// D = Scalar representing surface brightness at point
+		
+		// lambert = N.L (* coefficient of how reflective the surface is)
+		f32 lambert = Vector3Dot(&lightRay.direction, &normal) * *coef;
+		
+		// D (for each colour) = lambert * C * I
+		*red += lambert * currMat.diffuse.red * currLight.intensity.red;
+		*green += lambert * currMat.diffuse.green * currLight.intensity.green;
+		*blue += lambert * currMat.diffuse.blue * currLight.intensity.blue;
+	}
+	
+	// Iterate over the reflection
+	*coef *= currMat.reflection;
+	
+	// Reflection Math
+	// Θi = Angle of Incident
+	// Θr = Angle of Reflection
+	// Θi = Θr
+	//
+	// Let Incident Ray = P
+	// Let Reflected Ray = Q
+	// Assume P & Q are Normalised
+	//
+	//      Q1
+	// <-----------
+	// \	      ^
+	//  \         |
+	// Q \        |
+	//    \       | Q2
+	//     \      |
+	//      \     |
+	//       \	|
+	//       /\   |
+	//      /  \  |
+	//     |	\ |
+	// N   | Θr \|
+	// <----------|
+	//     | Θi /^
+	//     |    / |
+	//      \  /  |
+	//       \/   |
+	//       /    |
+	//      /     | P2
+	//     /      |
+	//    /       |
+	// P /        |
+	//  /         |
+	// /   	   |
+	// ---------->
+	//      P1
+	//
+	// |Q1| = cos(Θr) = cos(Θi) = |P1|
+	// |Q2| = sin(Θr) = sin(Θi) = |P2|
+	//
+	// Q1 = -P1 * Q1 = Q1
+	//
+	// Q = Q2 + Q1 = P2 - P1
+	// Q = P2 - P1
+	//
+	// With Orthogonal Projection
+	// 
+	//         /|
+	//        / |
+	//       /  |
+	//      /   |
+	//     /    |
+	//  V /     | ProjU(V) - V
+	//   /      |
+	//  /       |
+	// / U      v
+	// -->------>
+	//  ProjU(V)
+	//
+	// ProjU(V) = aU
+	// a = Arbitrary Scalar
+	//
+	// Since ProjU(V) - V is orthogonal to U
+	// (aU - V).U = 0
+	// 
+	// Multiply out the dot product
+	// aU.U - V.U = 0
+	// a = V.U / U.U
+	// Which Results in
+	// ProjU(V) = (U.V / U.U)U
+	//
+	// Knowing that by definition of the Dot Product
+	// U.U = |U|^2
+	// ProjU(V) = (U.V / |U|^2)U
+	//
+	// Apply this to the reflection situation
+	// P1 = (P.N / |N|^2)N
+	//
+	// |N| = 1, therefore
+	// P1 = (P.N)N
+	//
+	// With P2 being P - P1
+	// Q = (P - (P.N)N) - ((P.N)N)
+	//
+	// Q = P - 2(P.N)N
+	
+	// Reflected ray start and direction
+	// Q = New baseRay.direction
+	// P = Current baseRay.direction
+	// N = normal
+	// reflect = 2(P.N)
+	// temp = reflect * N
+	baseRay->origin = reflectStart;
+	f32 reflect = 2.0f * Vector3Dot(&baseRay->direction, &normal);
+	Vector3 temp = Vector3Scale(&normal, reflect);
+	baseRay->direction = Vector3Sub(&baseRay->direction, &temp);
+	
+	*level++;
+	
+	return true;
+}
+
 void SavePPM(char *filename, u8 *imgData, s32 width, s32 height)
 {
 	FILE *f;
@@ -182,55 +405,50 @@ void SavePPM(char *filename, u8 *imgData, s32 width, s32 height)
 
 s32 main(s32 argc, char* argv[])
 {
-	for (s32 i = 0; i < argc; ++i)
-	{
-		printf("%d - %s\n", i, argv[i]);
-	}
-	
 	Ray baseRay = {};
 	
 	Material mats[3];
 	
 	mats[0].diffuse.red = 1.0f;
-	mats[0].diffuse.green = 0.0f;
-	mats[0].diffuse.blue = 0.0f;
-	mats[0].reflection = 0.2f;
+	mats[0].diffuse.green = 1.0f;
+	mats[0].diffuse.blue = 1.0f;
+	mats[0].reflection = 0.33f;
 	
-	mats[1].diffuse.red = 0.0f;
+	mats[1].diffuse.red = 1.0f;
 	mats[1].diffuse.green = 1.0f;
 	mats[1].diffuse.blue = 0.0f;
 	mats[1].reflection = 0.5f;
 	
-	mats[2].diffuse.red = 0.0f;
+	mats[2].diffuse.red = 0.3f;
 	mats[2].diffuse.green = 0.0f;
 	mats[2].diffuse.blue = 1.0f;
-	mats[2].reflection = 0.9f;
+	mats[2].reflection = 0.1f;
 	
 	Sphere spheres[3];
 	
-	spheres[0].position.x = 200.0f;
-	spheres[0].position.y = 300.0f;
+	spheres[0].position.x = 100.0f;
+	spheres[0].position.y = 100.0f;
 	spheres[0].position.z = 0.0f;
-	spheres[0].radius = 100.0f;
+	spheres[0].radius = 75.0f;
 	spheres[0].material = 0;
 	
-	spheres[1].position.x = 400.0f;
+	spheres[1].position.x = 300.0f;
 	spheres[1].position.y = 400.0f;
 	spheres[1].position.z = 0.0f;
 	spheres[1].radius = 100.0f;
 	spheres[1].material = 1;
 	
-	spheres[2].position.x = 500.0f;
-	spheres[2].position.y = 140.0f;
+	spheres[2].position.x = 600.0f;
+	spheres[2].position.y = 250.0f;
 	spheres[2].position.z = 0.0f;
-	spheres[2].radius = 100.0f;
+	spheres[2].radius = 120.0f;
 	spheres[2].material = 2;
 	
 	Light lights[3];
 	
 	lights[0].position.x = 0.0f;
-	lights[0].position.y = 240.0f;
-	lights[0].position.z = -100.0f;
+	lights[0].position.y = 0.0f;
+	lights[0].position.z = -200.0f;
 	lights[0].intensity.red = 1.0f;
 	lights[0].intensity.green = 1.0f;
 	lights[0].intensity.blue = 1.0f;
@@ -249,7 +467,7 @@ s32 main(s32 argc, char* argv[])
 	lights[2].intensity.green = 0.5f;
 	lights[2].intensity.blue = 1.0f;
 	
-	u8 imgData[3 * WIDTH * HEIGHT];
+	u8* imgData = new u8[3 * WIDTH * HEIGHT];
 	
 	for (s32 y = 0; y < HEIGHT; ++y)
 	{
@@ -272,90 +490,22 @@ s32 main(s32 argc, char* argv[])
 			
 			do
 			{
-				// Find closest intersection
-				f32 closestIntersect = 20000.0f;
-				s32 currSphere = -1;
-				
-				for (u32 i = 0; i < 3; ++i)
-				{
-					if (RaySphereIntersection(&baseRay, &spheres[i], &closestIntersect))
-					{
-						currSphere = i;
-					}
-				}
-				
-				if (currSphere == -1)
+				if (!ProcessSphereRayTracing(&baseRay, spheres, ARRAY_COUNT(spheres), mats, lights, ARRAY_COUNT(lights), &coef, &red, &green, &blue, &level))
 				{
 					break;
 				}
-				
-				Vector3 scaled = Vector3Scale(&baseRay.direction, closestIntersect);
-				Vector3 newStart = Vector3Add(&baseRay.origin, &scaled);
-				
-				// Find normal for the new Vector at point of intersection
-				Vector3 normal = Vector3Sub(&newStart, &spheres[currSphere].position);
-				f32 temp = Vector3Dot(&normal, &normal);
-				if (temp == 0)
-				{
-					break;
-				}
-				
-				temp = 1.0f / sqrtf(temp);
-				normal = Vector3Scale(&normal, temp);
-				
-				// Find material for current sphere
-				Material currMat = mats[spheres[currSphere].material];
-				
-				// Find value of the light at this point
-				for (u32 j = 0; j < 3; ++j)
-				{
-					Light currLight = lights[j];
-					Vector3 distance = Vector3Sub(&currLight.position, &newStart);
-					
-					if (Vector3Dot(&normal, &distance) <= 0.0f)
-					{
-						continue;
-					}
-					
-					closestIntersect = sqrtf(Vector3Dot(&distance, &distance));
-					
-					if (closestIntersect <= 0.0f)
-					{
-						continue;
-					}
-					
-					Ray lightRay;
-					lightRay.origin = newStart;
-					lightRay.direction = Vector3Scale(&distance, (1.0f/closestIntersect));
-					
-					// Lambert Diffusion
-					f32 lambert = Vector3Dot(&lightRay.direction, &normal) * coef;
-					
-					red += lambert * currLight.intensity.red * currMat.diffuse.red;
-					green += lambert * currLight.intensity.green * currMat.diffuse.green;
-					blue += lambert * currLight.intensity.blue * currMat.diffuse.blue;
-				}
-				
-				// Iterate over the reflection
-				coef *= currMat.reflection;
-				
-				// Reflected ray start and direction
-				baseRay.origin = newStart;
-				f32 reflect = 2.0f * Vector3Dot(&baseRay.direction, &normal);
-				Vector3 tmp = Vector3Scale(&normal, reflect);
-				baseRay.direction = Vector3Sub(&baseRay.direction, &tmp);
-				
-				level++;
 			}
 			while ((coef > 0.0f) && (level < 15));
 			
-			imgData[(x + y * WIDTH) * 3 + 0] = (u8)min(red * 255.0f, 255.0f);
-			imgData[(x + y * WIDTH) * 3 + 1] = (u8)min(green * 255.0f, 255.0f);
-			imgData[(x + y * WIDTH) * 3 + 2] = (u8)min(blue * 255.0f, 255.0f);
+			imgData[(x + y * WIDTH) * 3 + 0] = (u8)MIN_VAL(red * 255.0f, 255.0f);
+			imgData[(x + y * WIDTH) * 3 + 1] = (u8)MIN_VAL(green * 255.0f, 255.0f);
+			imgData[(x + y * WIDTH) * 3 + 2] = (u8)MIN_VAL(blue * 255.0f, 255.0f);
 		}
 	}
 	
 	SavePPM(argv[1], imgData, WIDTH, HEIGHT);
+	
+	delete[] imgData;
 	
 	return 0;
 }
