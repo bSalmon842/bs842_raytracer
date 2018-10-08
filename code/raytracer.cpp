@@ -38,11 +38,14 @@ typedef double f64;
 // NOTE(bSalmon): Utilities
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof((array)[0]))
 #define MIN_VAL(a,b) (((a) < (b)) ? (a) : (b))
+#define WIN32_MAX_FILEPATH_LENGTH 0x00000104
 
 #define WIDTH 800
 #define HEIGHT 600
 
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include <math.h>
 
 struct Vector3
@@ -84,8 +87,19 @@ struct Sphere
 	s32 material;
 };
 
-// Return resultant vector of the subtraction of 2 vectors
-Vector3 Vector3Sub(Vector3 *v1, Vector3 *v2)
+// Function for Concatenating C Strings using Standard Library Functions
+char* concat(const char *string1, const char *string2)
+{
+    const size_t stringLength1 = strlen(string1);
+    const size_t stringLength2 = strlen(string2);
+    char *result = (char *)malloc(stringLength1 + stringLength2 + 1);
+    memcpy(result, string1, stringLength1);
+    memcpy(result + stringLength1, string2, stringLength2 + 1);
+    return result;
+}
+
+// Returns resultant vector of the subtraction of 2 vectors
+inline Vector3 Vector3Sub(Vector3 *v1, Vector3 *v2)
 {
 	Vector3 result;
 	result.x = v1->x - v2->x;
@@ -95,7 +109,7 @@ Vector3 Vector3Sub(Vector3 *v1, Vector3 *v2)
 }
 
 // Return the scalar value of the dot product of 2 vectors
-f32 Vector3Dot(Vector3 *v1, Vector3 *v2)
+inline f32 Vector3Dot(Vector3 *v1, Vector3 *v2)
 {
 	f32 result = 0.0f;
 	result += v1->x * v2->x;
@@ -104,7 +118,8 @@ f32 Vector3Dot(Vector3 *v1, Vector3 *v2)
 	return result;
 }
 
-Vector3 Vector3Scale(Vector3 *vec, float scale)
+// Returns multiplication of a Vector by a Scalar Value
+inline Vector3 Vector3Scale(Vector3 *vec, float scale)
 {
 	Vector3 result = {};
 	result.x = vec->x * scale;
@@ -113,27 +128,13 @@ Vector3 Vector3Scale(Vector3 *vec, float scale)
 	return result;
 }
 
+// Returns sum of 2 Vectors
 Vector3 Vector3Add(Vector3 *v1, Vector3 *v2)
 {
 	Vector3 result = {};
 	result.x = v1->x + v2->x;
 	result.y = v1->y + v2->y;
 	result.z = v1->z + v2->z;
-	return result;
-}
-
-Vector3 Vector3Cross(Vector3 *v1, Vector3 *v2)
-{
-	Vector3 result = {};
-	f32 i = (v1->y * v2->z) - (v1->z * v2->y);
-	f32 j = (v1->x * v2->z) - (v1->z * v2->x);
-	f32 k = (v1->x * v2->y) - (v1->y * v2->x);
-	j *= -1.0f;
-	
-	result.x = i;
-	result.y = j;
-	result.z = k;
-	
 	return result;
 }
 
@@ -503,7 +504,17 @@ s32 main(s32 argc, char* argv[])
 		}
 	}
 	
-	SavePPM(argv[1], imgData, WIDTH, HEIGHT);
+	char *extension = strrchr(argv[1], '.');
+	if (extension && (strcmp(extension, ".ppm") == 0))
+	{
+		SavePPM(argv[1], imgData, WIDTH, HEIGHT);
+	}
+	else
+	{
+		char *filename = concat(argv[1], ".ppm");
+		SavePPM(filename, imgData, WIDTH, HEIGHT);
+		free(filename);
+	}
 	
 	delete[] imgData;
 	
