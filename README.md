@@ -1,7 +1,7 @@
 ## Overview
 
-A Basic C/C++ Raytracer that outputs Raytraced Spheres to an 800x600 PPM file. Uses Lambert Diffusion
-An old exercise using online tutorials, currently in the process of rebuilding to incorporate more primitives.
+A Basic C/C++ Raytracer that outputs Raytraced Spheres to an 800x600 PPM file. Uses Lambert Diffusion.
+This is an old exercise using online tutorials, I am currently in the process of fully rebuilding to incorporate more primitives and more modern standards.
 
 
 ## Production
